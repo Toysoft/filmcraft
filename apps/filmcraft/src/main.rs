@@ -128,6 +128,10 @@ fn main() -> eframe::Result {
     // A start stuck in the graphics driver never dies, so nothing above counts it (#1061): after
     // graphics::HANG_TIMEOUT without a graphics device, the next mode is saved for the next launch.
     graphics.watch_for_hang();
+    // Starts an earlier watchdog found stuck can't end themselves: end them before this one loads
+    // the same driver, if they are still a process of this executable started when they say.
+    let exe = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default();
+    graphics.end_stuck_starts(|pid, launched| filmcraft_platform::stuck_process::end_stuck_process(pid, &exe, launched));
     // The GPU export renderer creates its own wgpu instance with every backend; after a start
     // fell back, that would load the driver that failed. Exports then composite on the CPU.
     if graphics.mode() == graphics::Mode::Default {

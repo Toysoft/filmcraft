@@ -3,6 +3,22 @@
 The egui frontend draws panels and dialogs, and dispatches project changes through the engine.
 Interactive controls keep stable automation ids regardless of the interface language.
 
+## Reactor generation
+
+The desktop File menu and Import view open the FastH3 Omni generation form. Completed clips are
+saved beside the active project in `<project file stem> Media/Reactor/` under unique MP4 names,
+then automatically imported into the Project panel's current bin. An unsaved project must be
+saved once before generation; the form offers the standard project Save action. Each generation
+uses the project path and bin captured when it started. If another project is opened meanwhile,
+the clip stays in its original media folder and its saved path is reported instead of importing
+into the other project. Save As does not move already generated media.
+
+The `reactor.generate` UI command accepts `prompt`, `seconds`, `aspect`, optional
+`reference_images` / `reference_audios` paths, and an optional `output_path`. Omitting `output_path`
+uses the same project media folder as the form. The desktop worker creates and reserves a writable
+local output before uploading references or submitting a billable request. The API key stays in
+the OS credential store. No network calls are needed by the form and output storage tests.
+
 ## Transition drop previews
 
 Dragging a video or audio transition over a compatible clip shows its actual time span, the

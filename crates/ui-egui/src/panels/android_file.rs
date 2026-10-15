@@ -12,9 +12,13 @@
 //! non-blocking dialog uses ([`crate::native_dialogs::pick`]), so the frame loop keeps running
 //! and the command continues on the frame it arrives.
 //!
-//! The root is that directory and it can never be left: entries are only ever *chosen* from
-//! listings, never typed; a suggested folder outside the root is clamped back inside it; and
-//! "Up one level" stops at the root — so no answer can point at anything the host did not offer.
+//! The browser walks **two roots**: that app-private directory, always, and shared internal
+//! storage ([`HostHooks::shared_storage_root`], `/storage/emulated/0`) once Android's "All files
+//! access" grant holds — offered as a switcher only when the host set that hook, so a desktop or
+//! web host still draws the one-root dialog exactly as before. Which root is shown can never be
+//! left: entries are only ever *chosen* from listings, never typed; a suggested folder outside
+//! the root is clamped back inside it; and "Up one level" stops at *that* root's top — so no
+//! answer can point at anything the host did not offer while the browser was inside it.
 //! An existing file is never replaced without being asked (`overwrite`), since a save that
 //! silently replaced a project would lose work.
 //!
@@ -120,6 +124,34 @@ pub fn readable(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok()
 }
 
+/// Whether `p` lies inside a directory the browser may open on: the app-private base always, the
+/// shared root when the host offers one. A path outside both is not a folder this dialog may
+/// start at (it falls back to the base), which is what keeps a stale saved location honest.
+pub fn inside_root(p: &Path, base: &Path, shared: Option<&Path>) -> bool {
+    p.starts_with(base) || shared.is_some_and(|s| p.starts_with(s))
+}
+
+/// The root the browser is currently inside: the app-private base (always), or shared internal
+/// storage while Android's "All files access" grant holds. Only *which* tree is shown changes —
+/// [`up_from`] clamps to [`StorageRoot::dir`] the same way for both.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StorageRoot {
+    /// The app-private directory ([`HostHooks::app_files_dir`]), always browsable.
+    App(PathBuf),
+    /// Shared internal storage ([`HostHooks::shared_storage_root`], `/storage/emulated/0`),
+    /// browsable only while the "All files access" grant holds.
+    Shared(PathBuf),
+}
+
+impl StorageRoot {
+    /// The directory this root starts at; the bound "Up one level" may not cross.
+    pub fn dir(&self) -> &Path {
+        match self {
+            StorageRoot::App(base) | StorageRoot::Shared(base) => base,
+        }
+    }
+}
+
 fn name_key(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
@@ -129,9 +161,11 @@ fn name_of(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned())
 }
 
-/// The dialog-local state of the in-app browser. The root it may reach is
-/// [`HostHooks::app_files_dir`], not stored here: it can't change while a dialog is open (and
-/// if it does, [`show`] cancels rather than stranding the command).
+/// The dialog-local state of the in-app browser. The roots it may reach come from the host's
+/// hooks ([`HostHooks::app_files_dir`], plus [`HostHooks::shared_storage_root`] when the host
+/// offers a second one), not from here: the first can't change while a dialog is open (and if it
+/// does, [`show`] cancels rather than stranding the command). Only *which* root the browser is
+/// inside is state, and every dialog starts in [`StorageRoot::App`].
 #[derive(Default)]
 pub struct AndroidFileDraft {
     /// The request being served (`None`: no in-app dialog open).
@@ -140,6 +174,9 @@ pub struct AndroidFileDraft {
     answer: Option<Sender<Vec<String>>>,
     /// The directory the browser is open at (`None`: only a prompt is shown).
     browser: Option<PathBuf>,
+    /// The root the browser is clamped to (`None`: [`StorageRoot::App`] at the host's storage
+    /// directory — where every dialog starts, and the only root without a shared-storage hook).
+    root: Option<StorageRoot>,
     /// The directory a save would write into (`None`: [`save_dir`] at the root).
     folder: Option<PathBuf>,
     /// What the file-name field holds while it is edited.
@@ -192,7 +229,11 @@ impl AndroidFileDraft {
                 d.browser = Some(base);
             }
             FileDialog::Folder { at } => {
-                d.browser = Some(at.as_deref().map(Path::new).filter(|p| p.is_dir() && p.starts_with(&base)).map(Path::to_path_buf).unwrap_or(base));
+                // A saved location inside *either* root is honored (a settings folder already
+                // picked in shared storage stays picked); anything else starts at the app-private
+                // base, as before.
+                let shared = hooks.shared_storage_root.as_deref();
+                d.browser = Some(at.as_deref().map(Path::new).filter(|p| p.is_dir() && inside_root(p, &base, shared)).map(Path::to_path_buf).unwrap_or(base));
             }
         }
         *self = d;
@@ -466,6 +507,13 @@ fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBu
     let many = app.file_dialogs.android_file.many;
     let selected = app.file_dialogs.android_file.selected.clone();
     let mut folder_name = std::mem::take(&mut app.file_dialogs.android_file.folder_name);
+    // The two roots: the app-private base always, and shared storage while the host offers it —
+    // the grant is re-read every frame, so returning from Android's settings page is enough.
+    let shared = app.hooks.shared_storage_root.clone();
+    let granted = app.hooks.shared_storage_granted.as_ref().is_some_and(|g| g());
+    let root = app.file_dialogs.android_file.root.clone().unwrap_or_else(|| StorageRoot::App(base.to_path_buf()));
+    let in_shared = matches!(root, StorageRoot::Shared(_));
+    let root_dir = root.dir().to_path_buf();
     // A save browses for the folder it lands in and a folder pick for the folder itself: there
     // the files are context, and the folders plus Choose are the answers.
     let picks_folder = matches!(request, FileDialog::Folder { .. } | FileDialog::SaveProject { .. } | FileDialog::SaveAs { .. });
@@ -480,7 +528,9 @@ fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBu
     let dirs = list_dirs(&dir);
     let files = list_files(&dir, &exts);
     let listed = readable(&dir);
-    let up = up_from(base, &dir);
+    let up = up_from(&root_dir, &dir);
+    // The switcher row takes the listing that much less of the screen.
+    let list_h = list_height(ctx) - if shared.is_some() { 36.0 } else { 0.0 };
 
     let mut enter: Option<PathBuf> = None;
     let mut go_up = false;
@@ -489,6 +539,10 @@ fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBu
     let mut choose = false;
     let mut cancel = false;
     let mut create = false;
+    let mut to_app = false;
+    let mut to_shared = false;
+    let mut ask_grant = false;
+    let mut grant = false;
 
     if modal(app, ctx, "android-file-browser", &title, width(ctx), |app, ui| {
         let t = app.tokens;
@@ -500,6 +554,29 @@ fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBu
             });
         });
         ui.label(RichText::new(fit(ui, &dir.to_string_lossy(), ui.available_width())).size(11.5).color(t.text_dim));
+        // Which tree this listing is in: the app-private storage, or shared storage. The row
+        // exists only while the host offers the second root (a desktop or web host draws
+        // nothing), and an ungranted shared root asks for the grant instead of navigating.
+        if shared.is_some() {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let here = ui.selectable_label(!in_shared, tl!("App storage"));
+                app.auto.add("androidFile.rootApp", here.rect, tl!("App storage"));
+                if here.clicked() {
+                    to_app = true;
+                }
+                let label = if granted { tl!("Shared storage") } else { tl!("Shared storage (grant access)") };
+                let there = ui.selectable_label(in_shared, label);
+                app.auto.add("androidFile.rootShared", there.rect, label);
+                if there.clicked() {
+                    if granted {
+                        to_shared = true;
+                    } else {
+                        ask_grant = true;
+                    }
+                }
+            });
+        }
         ui.add_space(6.0);
         // A folder can be created here (an export's date folder, a project's shots).
         ui.horizontal(|ui| {
@@ -513,10 +590,16 @@ fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBu
         ui.add_space(6.0);
         if !listed {
             ui.label(RichText::new(tl!("This folder can't be read.")).size(13.0).color(t.text_dim));
+            // In the shared root an unreadable listing is the grant that does not hold yet, not
+            // an empty folder: offer the way to get it (the settings page, or why not).
+            if in_shared && !granted {
+                ui.add_space(4.0);
+                grant = button(app, ui, "grant", tl!("Grant access"), true);
+            }
         } else if dirs.is_empty() && files.is_empty() {
             ui.label(RichText::new(tl!("Nothing here.")).size(13.0).color(t.text_dim));
         } else {
-            egui::ScrollArea::vertical().id_salt("android-file-list").auto_shrink([false, false]).max_height(list_height(ctx)).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("android-file-list").auto_shrink([false, false]).max_height(list_h).show(ui, |ui| {
                 for (i, d) in dirs.iter().enumerate() {
                     let label = name_of(d);
                     if row(app, ui, &t, &format!("dir.{i}"), &label, true, false) {
@@ -565,7 +648,28 @@ fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBu
     })
     .is_some()
     {
-        if let Some(path) = enter {
+        // Switching roots starts at the new root's top. Asking for the grant leaves the browser
+        // exactly where it is: Android re-enters the app from its own settings page and the
+        // grant is re-read every frame, so the listing opens up on its own — no callback, and
+        // a device that cannot ask just says so instead of pretending.
+        if ask_grant || grant {
+            if let Some(ask) = app.hooks.shared_storage_grant.as_ref() {
+                ask();
+                app.ui.status = tl!("Allow \"All files access\" for FilmCraft on the settings page, then tap Shared storage.").into();
+            } else {
+                app.ui.status = tl!("This build can't request shared-storage access.").into();
+            }
+        } else if to_app && in_shared {
+            app.file_dialogs.android_file.root = Some(StorageRoot::App(base.to_path_buf()));
+            app.file_dialogs.android_file.browser = Some(base.to_path_buf());
+            app.file_dialogs.android_file.selected.clear();
+        } else if to_shared && !in_shared {
+            if let Some(sroot) = shared.clone() {
+                app.file_dialogs.android_file.root = Some(StorageRoot::Shared(sroot.clone()));
+                app.file_dialogs.android_file.browser = Some(sroot);
+                app.file_dialogs.android_file.selected.clear();
+            }
+        } else if let Some(path) = enter {
             app.file_dialogs.android_file.browser = Some(path);
             app.file_dialogs.android_file.selected.clear();
         } else if go_up {
@@ -934,6 +1038,17 @@ mod tests {
         assert_eq!(up_from(root, Path::new("/files")), PathBuf::from("/files"));
         // a directory that somehow sits outside the root goes straight back to it
         assert_eq!(up_from(root, Path::new("/elsewhere")), PathBuf::from("/files"));
+        // the shared root clamps the same way, and neither root's bound leads to the other
+        let shared = Path::new("/storage/emulated/0");
+        assert_eq!(up_from(shared, Path::new("/storage/emulated/0/DCIM/Cam")), PathBuf::from("/storage/emulated/0/DCIM"));
+        assert_eq!(up_from(shared, Path::new("/storage/emulated/0")), PathBuf::from("/storage/emulated/0"));
+        assert_eq!(up_from(shared, Path::new("/files")), PathBuf::from("/storage/emulated/0"));
+        // and `StorageRoot` names the two roots the switcher chooses between
+        assert_eq!(StorageRoot::App("/files".into()).dir(), Path::new("/files"));
+        assert_eq!(StorageRoot::Shared("/storage/emulated/0".into()).dir(), shared);
+        assert!(!inside_root(Path::new("/storage/emulated/0/DCIM"), root, None), "no shared root offered: nothing outside the base");
+        assert!(inside_root(Path::new("/storage/emulated/0/DCIM"), root, Some(shared)), "offered: a shared path is inside a root");
+        assert!(!inside_root(Path::new("/etc"), root, Some(shared)), "and /etc is in neither");
     }
 
     #[test]
@@ -973,5 +1088,154 @@ mod tests {
         assert_eq!(sanitize_name("../../evil.fcproj", "F.fcproj"), "evil.fcproj");
         assert_eq!(sanitize_name("", "Fallback.fcproj"), "Fallback.fcproj");
         assert_eq!(sanitize_name("..", "Fallback.fcproj"), "Fallback.fcproj");
+    }
+
+    /// Two roots side by side — `…/app` (the app-private storage) and `…/emulated` (the shared
+    /// one, with `DCIM/Cam` and a photo inside) — deliberately not nested, so a clamp that
+    /// confused the two would fail a test instead of hiding in it. The third path is the parent
+    /// to clean up.
+    fn two_roots(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("filmcraft-roots-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let base = root.join("app");
+        let shared = root.join("emulated");
+        std::fs::create_dir_all(base.join("Projects")).unwrap();
+        std::fs::create_dir_all(base.join("Exports")).unwrap();
+        std::fs::write(base.join("Projects").join("Scene.fcproj"), "{}").unwrap();
+        std::fs::create_dir_all(shared.join("DCIM/Cam")).unwrap();
+        std::fs::write(shared.join("DCIM").join("IMG_1.jpg"), "x").unwrap();
+        (root, base, shared)
+    }
+
+    /// The host that offers `base` as its app-private storage and `shared` as the second root,
+    /// with the grant check and the ask under the test's hands (both start ungranted).
+    fn picker_with_shared(base: &Path, shared: &Path) -> (FilmcraftApp, egui::Context, std::rc::Rc<std::cell::Cell<bool>>, std::rc::Rc<std::cell::Cell<bool>>) {
+        let (mut app, ctx) = picker(base);
+        let granted = std::rc::Rc::new(std::cell::Cell::new(false));
+        let asked = std::rc::Rc::new(std::cell::Cell::new(false));
+        let g = std::rc::Rc::clone(&granted);
+        let a = std::rc::Rc::clone(&asked);
+        app.hooks.shared_storage_root = Some(shared.to_path_buf());
+        app.hooks.shared_storage_granted = Some(Box::new(move || g.get()));
+        app.hooks.shared_storage_grant = Some(Box::new(move || a.set(true)));
+        (app, ctx, granted, asked)
+    }
+
+    /// Without a shared-storage hook there is no switcher at all — the desktop and the web draw
+    /// the one-root dialog exactly as before — and with one, both roots are offered.
+    #[test]
+    fn the_switcher_is_drawn_only_when_the_host_offers_shared_storage() {
+        let dir = fixture("switcher-off");
+        let (mut app, ctx) = picker(&dir);
+        app.pick_ui(FileDialog::Folder { at: None }, |_, _| {});
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        assert!(element(&app, "androidFile.rootApp").is_none(), "no switcher without a shared-storage hook");
+        assert!(element(&app, "androidFile.rootShared").is_none(), "…nor a shared button");
+        assert!(element(&app, "androidFile.grant").is_none(), "…nor a grant button");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let (root, base, shared) = two_roots("switcher-on");
+        let (mut app, ctx, _, _) = picker_with_shared(&base, &shared);
+        app.pick_ui(FileDialog::Folder { at: None }, |_, _| {});
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        assert!(element(&app, "androidFile.rootApp").is_some(), "the app-storage side of the switcher");
+        assert!(element(&app, "androidFile.rootShared").is_some(), "the shared-storage side");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The shared root is not entered while the grant is missing: the tap asks for it instead
+    /// (the settings page), says so, and the browser stays where it was.
+    #[test]
+    fn the_shared_root_is_asked_for_not_entered_without_the_grant() {
+        let (root, base, shared) = two_roots("grant");
+        let (mut app, ctx, granted, asked) = picker_with_shared(&base, &shared);
+        app.pick_ui(FileDialog::Folder { at: None }, |_, _| {});
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        tap(&mut app, &ctx, "androidFile.rootShared");
+        assert!(asked.get(), "the grant was asked for");
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(base.as_path()), "still in the app-private root");
+        assert!(!app.ui.status.is_empty(), "the user is told what to do next");
+        // the grant lands (the settings page was used): the very same tap now navigates
+        granted.set(true);
+        tap(&mut app, &ctx, "androidFile.rootShared");
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(shared.as_path()), "inside the shared root");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Inside shared storage "Up one level" stops at *its* top, and the switcher takes the
+    /// browser back: neither root can be climbed out of, and neither is reached by accident.
+    #[test]
+    fn switching_roots_stays_inside_the_root_chosen() {
+        let (root, base, shared) = two_roots("roots");
+        let (mut app, ctx, granted, _) = picker_with_shared(&base, &shared);
+        granted.set(true);
+        app.pick_ui(FileDialog::Folder { at: None }, |_, _| {});
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        tap(&mut app, &ctx, "androidFile.rootShared");
+        tap(&mut app, &ctx, "androidFile.dir.0"); // DCIM
+        tap(&mut app, &ctx, "androidFile.dir.0"); // DCIM/Cam
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(shared.join("DCIM/Cam").as_path()));
+        tap(&mut app, &ctx, "androidFile.up");
+        tap(&mut app, &ctx, "androidFile.up");
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(shared.as_path()), "climbing stops at the shared root");
+        tap(&mut app, &ctx, "androidFile.up");
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(shared.as_path()), "and never leaves it");
+        tap(&mut app, &ctx, "androidFile.rootApp");
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(base.as_path()), "the switcher takes it back");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Browse… on the save prompt walks into shared storage and comes back with that folder, so
+    /// the save lands there — outside the app-private directory, because the user chose it.
+    #[test]
+    fn a_save_browse_can_choose_a_folder_in_shared_storage() {
+        let (root, base, shared) = two_roots("save-shared");
+        let (mut app, ctx, granted, _) = picker_with_shared(&base, &shared);
+        granted.set(true);
+        let got = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let answer = std::rc::Rc::clone(&got);
+        app.pick_ui(FileDialog::SaveProject { name: "Take3.fcproj".into() }, move |_, paths| *answer.borrow_mut() = Some(paths));
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        tap(&mut app, &ctx, "androidFile.browse");
+        tap(&mut app, &ctx, "androidFile.rootShared");
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(shared.as_path()));
+        tap(&mut app, &ctx, "androidFile.dir.0"); // DCIM
+        tap(&mut app, &ctx, "androidFile.choose");
+        assert!(got.borrow().is_none(), "the browse does not answer the save");
+        assert!(app.file_dialogs.android_file.browser.is_none(), "the prompt is back");
+        assert_eq!(app.file_dialogs.android_file.folder.as_deref(), Some(shared.join("DCIM").as_path()), "with the folder that was chosen");
+        tap(&mut app, &ctx, "androidFile.save");
+        let want = shared.join("DCIM").join("Take3.fcproj").to_string_lossy().into_owned();
+        assert_eq!(got.borrow().clone(), Some(vec![want]), "the save lands in shared storage");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A shared root that cannot be read yet says so and offers the grant — the state an
+    /// ungranted device shows — instead of looking like an empty folder.
+    #[test]
+    fn the_unreadable_shared_root_offers_the_grant() {
+        let (root, base, _shared) = two_roots("unreadable");
+        // not a directory at all: exactly what an ungranted shared root looks like to the app
+        let missing = root.join("not-there");
+        let (mut app, ctx, granted, asked) = picker_with_shared(&base, &missing);
+        granted.set(true);
+        app.pick_ui(FileDialog::Folder { at: None }, |_, _| {});
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        tap(&mut app, &ctx, "androidFile.rootShared");
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(missing.as_path()));
+        // the grant stops holding while browsing it (or was never really there)
+        granted.set(false);
+        frame(&mut app, &ctx);
+        assert!(element(&app, "androidFile.grant").is_some(), "the grant is offered inside the unreadable shared root");
+        tap(&mut app, &ctx, "androidFile.grant");
+        assert!(asked.get(), "asking opens the settings page");
+        assert_eq!(app.file_dialogs.android_file.browser.as_deref(), Some(missing.as_path()), "the listing stays put");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

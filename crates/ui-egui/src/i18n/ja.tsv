@@ -3619,3 +3619,9 @@
 	Nothing here.	ここには何もありません。
 	Select at least one file.	少なくとも1つのファイルを選択してください。
 	This folder can't be read.	このフォルダーを読み取れません。
+	App storage	アプリのストレージ
+	Shared storage	共有ストレージ
+	Shared storage (grant access)	共有ストレージ（アクセスを許可）
+	Grant access	アクセスを許可
+	Allow "All files access" for FilmCraft on the settings page, then tap Shared storage.	設定ページで FilmCraft に「すべてのファイルへのアクセス」を許可してから、共有ストレージをタップしてください。
+	This build can't request shared-storage access.	このビルドでは共有ストレージへのアクセスをリクエストできません。

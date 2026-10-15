@@ -3595,3 +3595,9 @@
 	Nothing here.	这里没有内容。
 	Select at least one file.	请至少选择一个文件。
 	This folder can't be read.	无法读取此文件夹。
+	App storage	应用存储
+	Shared storage	共享存储
+	Shared storage (grant access)	共享存储（授予权限）
+	Grant access	授予权限
+	Allow "All files access" for FilmCraft on the settings page, then tap Shared storage.	在设置页面为 FilmCraft 允许“所有文件访问”，然后点按“共享存储”。
+	This build can't request shared-storage access.	此版本无法请求共享存储访问权限。

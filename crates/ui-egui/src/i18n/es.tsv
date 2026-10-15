@@ -3620,3 +3620,9 @@
 	Nothing here.	No hay nada aquí.
 	Select at least one file.	Selecciona al menos un archivo.
 	This folder can't be read.	No se puede leer esta carpeta.
+	App storage	Almacenamiento de la app
+	Shared storage	Almacenamiento compartido
+	Shared storage (grant access)	Almacenamiento compartido (concede acceso)
+	Grant access	Conceder acceso
+	Allow "All files access" for FilmCraft on the settings page, then tap Shared storage.	Permite "All files access" para FilmCraft en la página de ajustes y luego toca Almacenamiento compartido.
+	This build can't request shared-storage access.	Esta versión no puede solicitar acceso al almacenamiento compartido.

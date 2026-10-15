@@ -162,10 +162,26 @@ pub struct HostHooks {
     /// The storage directory the host offers the app (the Android build's
     /// `AndroidApp::internal_data_path`): with it, every [`native_dialogs::FileDialog`] is served
     /// by FilmCraft's own in-app browser ([`crate::panels::android_file`]) instead of the pickers
-    /// above, which have no Android backend. It is the root the browser may never leave, and the
-    /// folder saves, opens and exports default to (`Projects/`, `Exports/` beneath it). Desktop
-    /// and web hosts leave it `None` and keep their system pickers.
+    /// above, which have no Android backend. It is the browser's first root — the one it starts
+    /// in, the one it may never leave *while showing it*, and the folder saves, opens and exports
+    /// default to (`Projects/`, `Exports/` beneath it). Desktop and web hosts leave it `None` and
+    /// keep their system pickers.
     pub app_files_dir: Option<std::path::PathBuf>,
+    /// Android's shared internal-storage root (`/storage/emulated/0`): the browser's **second**
+    /// root, offered as a switcher beside `app_files_dir` only while this is set — only the
+    /// Android build sets it. Navigating it still needs the grant below: without it the switcher
+    /// asks for the grant instead of going there. `None` on the desktop and the web, where no
+    /// switcher is drawn at all.
+    pub shared_storage_root: Option<std::path::PathBuf>,
+    /// Whether Android's "All files access" (`MANAGE_EXTERNAL_STORAGE`) holds right now,
+    /// re-checked every time the browser offers the shared root — the settings page the user is
+    /// sent to backgrounds the app, so a re-check needs no callback. `None` elsewhere (and when
+    /// no JVM was reachable): shared storage then reads as not granted.
+    pub shared_storage_granted: Option<Box<dyn Fn() -> bool>>,
+    /// Asks Android for "All files access": its system settings page on Android 11+, the
+    /// ordinary permission dialog before that. Best effort — a build or device that cannot ask
+    /// says so in the status bar and the browser stays where it is. `None` elsewhere.
+    pub shared_storage_grant: Option<Box<dyn Fn()>>,
     /// Open a URL in the system browser (Help menu links, About dialog, Discord button, Import
     /// screen). Without it, or when it fails, links go through `egui::Context::open_url`, which
     /// opens a new tab on the web (the native egui backend is built without its `links` feature).

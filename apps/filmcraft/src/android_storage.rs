@@ -2,10 +2,11 @@
 //! `AndroidApp::internal_data_path` directory.
 //!
 //! Android has no system file picker in v1 (rfd has no backend there), so saves, exports and
-//! settings stay in private storage: no permissions, no Storage Access Framework round-trip —
-//! invisible to the Files app, and browsable through FilmCraft's own in-app browser instead
-//! (`filmcraft-ui-egui`, which starts at [`Layout::base`]). Pure path logic, unit-tested on the
-//! host; the handle comes from `run_android` (`apps/filmcraft/src/lib.rs`).
+//! settings default to private storage: no Storage Access Framework round-trip — invisible to the
+//! Files app, and browsable through FilmCraft's own in-app browser instead
+//! (`filmcraft-ui-egui`, which starts at [`Layout::base`]). That browser offers shared storage
+//! ([`SHARED_ROOT`]) as a second root once the user grants "All files access". Pure path logic,
+//! unit-tested on the host; the handle comes from `run_android` (`apps/filmcraft/src/lib.rs`).
 //!
 //! `run_inner` picks [`Layout::config`] as the data root and hands the whole layout to
 //! `app_creator`, which sets the browser's root (`HostHooks::app_files_dir`) and the
@@ -16,6 +17,12 @@
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
+
+/// Android's shared internal-storage root (`/storage/emulated/0`, the primary shared tree): the
+/// in-app browser's *second* root beside [`Layout::base`], offered only on Android and usable
+/// only once the user grants "All files access" (`MANAGE_EXTERNAL_STORAGE`) — the grant is what
+/// decides whether it can be listed, so the path itself is always the same.
+pub const SHARED_ROOT: &str = "/storage/emulated/0";
 
 /// The storage folders below the app-private base directory.
 #[derive(Clone, Debug, PartialEq, Eq)]

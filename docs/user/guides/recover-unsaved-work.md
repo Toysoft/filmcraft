@@ -2,7 +2,7 @@
 title: Recover unsaved work
 description: Bring back unsaved changes after FilmCraft quit, crashed or lost power, using the Recover Unsaved Changes dialog.
 order: 60
-verified: 0.7.2
+verified: 0.8.0
 ---
 
 If FilmCraft was closed or quit with unsaved changes, it offers to bring them back the next time it starts. Click **Recover**.
@@ -22,4 +22,6 @@ Choose **File ▸ Recover Unsaved Changes…**. The menu item works only while t
 
 ## How it works
 
-FilmCraft writes a crash-recovery journal about a second after each edit, so unsaved changes survive a crash or power cut. Saves are atomic, and auto-save keeps a rolling set of versions. Auto-save settings are under **Edit ▸ Preferences ▸ Auto Save…** (on macOS, **FilmCraft ▸ Settings ▸ Auto Save**).
+While **Keep a recovery copy of unsaved changes** is on (the default), FilmCraft copies unsaved changes in the background. It writes the copy after about a second without edits. While you keep editing, it still writes one at least every 5 seconds; **Update it at least every** changes that. Recovery brings back the last copy that was written, so the most recent edits before a crash or power cut may be missing. With the setting off, there is nothing to recover.
+
+Saves are atomic, and auto-save keeps a rolling set of versions. These settings are under **Edit ▸ Preferences ▸ Auto Save…** (on macOS, **FilmCraft ▸ Settings ▸ Auto Save**), in the **Crash Recovery** group.

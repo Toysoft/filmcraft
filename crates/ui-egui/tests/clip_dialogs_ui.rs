@@ -477,3 +477,34 @@ fn native_edit_menu_edits_the_focused_text_field() {
     assert_eq!(copied.as_deref(), Some("Ocean"), "Cut puts the field's text on the clipboard");
     assert!(std::sync::Arc::ptr_eq(&project_before, &d.app().session.project), "no clips were cut or pasted");
 }
+
+/// #1333: the macOS menu bar takes ⌘B (File ▸ New ▸ Bin) before the window sees it, so recording
+/// ⌘B in Keyboard Shortcuts made a bin and the recorder never got the chord. A menu command that
+/// arrives while recording is recorded as its shortcut; with the dialog open and nothing being
+/// recorded it does not run.
+#[test]
+fn native_menu_chords_are_recorded_in_the_shortcut_editor() {
+    let mut d = Driver::new();
+    let (tx, rx) = channel();
+    d.app().command_inbox = Some(rx);
+    assert_eq!(d.app().session.shortcuts.primary("file.newBin").as_deref(), Some("Cmd+B"));
+    d.ok("ui.menu.invoke", json!({"id": "app.keyboardShortcuts"}));
+    d.frames(4);
+    d.ok("ui.click", json!({"id": "shortcuts.search"}));
+    d.ok("ui.type", json!({"text": "Add Edit"}));
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "shortcuts.cell.sequence.addEdit"}));
+    d.frames(3);
+    assert_eq!(d.app().shortcut_editor.recording, Some(("sequence.addEdit".into(), false)));
+    let project = d.app().session.project.clone();
+    // ⌘B pressed while recording: the menu bar sends New Bin
+    tx.send("file.newBin".to_string()).unwrap();
+    d.frames(3);
+    assert_eq!(d.app().shortcut_editor.recording, None, "the chord was recorded");
+    assert_eq!(d.app().session.shortcuts.primary("sequence.addEdit").as_deref(), Some("Cmd+B"));
+    assert!(std::sync::Arc::ptr_eq(&project, &d.app().session.project), "no bin was made");
+    // not recording: a menu shortcut still does not run behind the dialog
+    tx.send("sequence.addEdit".to_string()).unwrap();
+    d.frames(3);
+    assert!(std::sync::Arc::ptr_eq(&project, &d.app().session.project), "the dialog keeps menu shortcuts from running");
+}

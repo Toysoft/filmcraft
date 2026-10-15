@@ -1437,6 +1437,26 @@ impl FilmcraftApp {
     /// Sends the menu tree to the native menu bar when it changed, so its items show the same
     /// labels, shortcuts and enablement as the in-window menus (Undo with nothing to undo is
     /// disabled). Without a native menu bar this does nothing.
+    /// The native menu bar (macOS) takes the key equivalents of its items before the window sees
+    /// them, so with the Keyboard Shortcuts dialog open a chord such as ⌘B arrives as its menu
+    /// command (New Bin) instead of a key press: it ran the command and the recorder never saw the
+    /// chord (#1333). While a shortcut is being recorded, the command becomes the key press of its
+    /// shortcut for the recorder; otherwise the dialog keeps it from running, as it does for the
+    /// in-app shortcuts. Returns whether `id` was taken.
+    fn menu_command_in_shortcut_editor(&mut self, ctx: &egui::Context, id: &str) -> bool {
+        if self.dialog != Some(Dialog::Shortcuts) {
+            return false;
+        }
+        let chord = self.session.shortcuts.primary(id).as_deref().and_then(menus::parse_shortcut);
+        if self.shortcut_editor.recording.is_some()
+            && let Some((modifiers, key)) = chord
+        {
+            self.menu_text_events.push(egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers });
+            ctx.request_repaint();
+        }
+        true
+    }
+
     /// The native menu bar (macOS) takes the Edit menu's ⌘C, ⌘X, ⌘V, ⌘A, ⌘Z and ⇧⌘Z before the
     /// window sees them, so they arrive as menu commands. While a text field or a graphic's text
     /// is being edited they belong to the text, as they do on Windows and Linux: this queues the
@@ -1793,7 +1813,7 @@ impl FilmcraftApp {
         self.handle_drops(&ctx);
         if let Some(rx) = self.command_inbox.take() {
             while let Ok(id) = rx.try_recv() {
-                if self.control_input_only || self.edit_menu_to_text(&ctx, &id) {
+                if self.control_input_only || self.menu_command_in_shortcut_editor(&ctx, &id) || self.edit_menu_to_text(&ctx, &id) {
                     continue;
                 }
                 if let Err(e) = menus::invoke(self, &ctx, &id, json!({})) {

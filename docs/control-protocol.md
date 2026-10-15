@@ -163,9 +163,10 @@ Ctrl), `Ctrl` (macOS ⌃), `Alt`, `Shift`. The dialog (Edit ▸ Keyboard Shortcu
 directory instead of a system picker — the Android build — has no rfd dialog to open, so every file
 dialog is FilmCraft's own browser and `ui.click` drives it with `androidFile.*`: `up`,
 `newFolder` / `folderName` / `create`, `dir.<n>` and `file.<n>` (the *n*th folder / file of the
-listing), `project.<n>` (the Open Project list), `choose` (a folder pick, or a multi-file pick after
-`file.<n>` ticked its rows), `save`, `browse`, `cancel`, `name` (the save prompt's file-name field)
-and `overwrite` — which appears only where saving would replace an existing file. A pick is answered
+listing), `project.<n>` (the Open Project list), `choose` (a folder pick — including the save prompt's
+`browse`, which returns to the prompt with that folder instead of answering — or a multi-file pick
+after `file.<n>` ticked its rows), `save`, `browse`, `cancel`, `name` (the save prompt's file-name
+field) and `overwrite` — which appears only where saving would replace an existing file. A pick is answered
 exactly as a system dialog's would be: the command continues on the frame the id is clicked. A host
 with the system picker draws none of this.
 

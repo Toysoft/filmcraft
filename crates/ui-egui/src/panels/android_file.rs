@@ -459,17 +459,21 @@ fn open_project(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path) {
 
 /// The browser: the location with `Up one level` and a new-folder field, then the folders and
 /// files of the directory. A file pick answers on a tap (or with Choose, for several); a folder
-/// pick answers with the directory shown.
+/// pick answers with the directory shown. A save's `Browse…` is a folder pick too, except that
+/// it comes *back* to the prompt with the folder it landed on rather than answering the save.
 fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBuf, request: &FileDialog) {
     let exts = app.file_dialogs.android_file.exts.clone();
     let many = app.file_dialogs.android_file.many;
     let selected = app.file_dialogs.android_file.selected.clone();
     let mut folder_name = std::mem::take(&mut app.file_dialogs.android_file.folder_name);
-    let is_file = !matches!(request, FileDialog::Folder { .. });
+    // A save browses for the folder it lands in and a folder pick for the folder itself: there
+    // the files are context, and the folders plus Choose are the answers.
+    let picks_folder = matches!(request, FileDialog::Folder { .. } | FileDialog::SaveProject { .. } | FileDialog::SaveAs { .. });
+    let is_file = !picks_folder;
     let projects_only = !exts.is_empty() && exts.iter().all(|e| e.eq_ignore_ascii_case("fcproj"));
     let title = match request {
         FileDialog::OpenFile { filter, .. } => filter.clone(),
-        FileDialog::Folder { .. } => tl!("Choose Folder").to_string(),
+        FileDialog::Folder { .. } | FileDialog::SaveProject { .. } | FileDialog::SaveAs { .. } => tl!("Choose Folder").to_string(),
         _ if projects_only => tl!("Open Project…").to_string(),
         _ => tl!("Media").to_string(),
     };
@@ -521,7 +525,10 @@ fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBu
                 }
                 for (i, f) in files.iter().enumerate() {
                     let label = name_of(f);
-                    if row(app, ui, &t, &format!("file.{i}"), &label, false, selected.contains(f)) {
+                    // Where the folder is the answer, a file is context: tapping one must never
+                    // answer a save (that would replace it without the overwrite prompt).
+                    let tapped = row(app, ui, &t, &format!("file.{i}"), &label, false, is_file && selected.contains(f));
+                    if tapped && is_file {
                         if many {
                             toggle = Some(i);
                         } else {
@@ -592,8 +599,14 @@ fn browser(app: &mut FilmcraftApp, ctx: &egui::Context, base: &Path, dir: PathBu
                 } else {
                     app.file_dialogs.android_file.finish(paths);
                 }
-            } else {
+            } else if matches!(request, FileDialog::Folder { .. }) {
                 app.file_dialogs.android_file.finish(vec![dir.to_string_lossy().into_owned()]);
+            } else {
+                // A save's browse: this is the folder it lands in, and the prompt comes back
+                // with it — answering the save itself with a directory would save nowhere.
+                app.file_dialogs.android_file.folder = Some(dir);
+                app.file_dialogs.android_file.browser = None;
+                app.file_dialogs.android_file.selected.clear();
             }
         } else if cancel || crate::widgets::escape_closes(ctx) {
             app.file_dialogs.android_file.finish(Vec::new());
@@ -787,6 +800,51 @@ mod tests {
         frame(&mut app, &ctx);
         tap(&mut app, &ctx, "androidFile.choose");
         assert_eq!(got.borrow().clone(), Some(vec![dir.to_string_lossy().into_owned()]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A tap on a file never answers a folder pick: the folder is the answer.
+    #[test]
+    fn a_folder_pick_ignores_a_tap_on_a_file() {
+        let dir = fixture("folder-file-tap");
+        let (mut app, ctx) = picker(&dir);
+        let got = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let answer = std::rc::Rc::clone(&got);
+        app.pick_ui(FileDialog::Folder { at: None }, move |_, paths| *answer.borrow_mut() = Some(paths));
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        tap(&mut app, &ctx, "androidFile.file.0");
+        assert!(got.borrow().is_none(), "the file is context, not an answer");
+        assert!(app.file_dialogs.android_file.browser.is_some(), "the listing stays open");
+        tap(&mut app, &ctx, "androidFile.choose");
+        assert_eq!(got.borrow().clone(), Some(vec![dir.to_string_lossy().into_owned()]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Browse… on the save prompt picks the folder the save lands in and comes back to the
+    /// prompt (answering the save with a directory would save nowhere); a tap on a file there
+    /// must not answer it either, which would replace that file without the overwrite prompt.
+    #[test]
+    fn a_save_browse_picks_the_folder_and_returns_to_the_prompt() {
+        let dir = fixture("save-browse");
+        let (mut app, ctx) = picker(&dir);
+        let got = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let answer = std::rc::Rc::clone(&got);
+        app.pick_ui(FileDialog::SaveProject { name: "Take2.fcproj".into() }, move |_, paths| *answer.borrow_mut() = Some(paths));
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        tap(&mut app, &ctx, "androidFile.browse");
+        assert!(app.file_dialogs.android_file.browser.is_some(), "the browser is open");
+        tap(&mut app, &ctx, "androidFile.file.0");
+        assert!(got.borrow().is_none(), "a tap on a file does not answer the save");
+        assert!(app.file_dialogs.android_file.browser.is_some(), "the browser stays open");
+        tap(&mut app, &ctx, "androidFile.choose");
+        assert!(got.borrow().is_none(), "the browse does not answer the save");
+        assert!(app.file_dialogs.android_file.browser.is_none(), "the prompt is back");
+        assert_eq!(app.file_dialogs.android_file.folder.as_deref(), Some(dir.join("Projects").as_path()), "with the folder that was chosen");
+        tap(&mut app, &ctx, "androidFile.save");
+        let want = dir.join("Projects").join("Take2.fcproj").to_string_lossy().into_owned();
+        assert_eq!(got.borrow().clone(), Some(vec![want]), "the save lands in the folder the browse picked");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

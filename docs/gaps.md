@@ -1,6 +1,6 @@
 # Where FilmCraft falls short of Premiere Pro
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (G21: the Android build is app-private only) · **Target:** Adobe Premiere Pro 2026 (26.5.2)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (G21: shared storage, with Android's "All files access" grant) · **Target:** Adobe Premiere Pro 2026 (26.5.2)
 
 Every known shortfall, one entry each, ranked by what most stops an editor using FilmCraft for real
 work. This is the work list: agents should prefer it over adding checklist items. Numbers are in
@@ -34,7 +34,7 @@ platforms** G4, G9, G17, G21; **performance** G16; **ecosystem** G11; **measurem
 | G18 | Effects depth: approximations and missing behaviour | feature | no | 60–110 h |
 | G19 | Speech to text off in release builds | feature, AI | no | 5–10 h |
 | G20 | The web app shell | platforms | no | 40–80 h |
-| G21 | The Android build is app-private only | platforms | no | 30–60 h |
+| G21 | The Android build has no hardware codecs or store packaging | platforms | no | 20–45 h |
 
 ## G1. Nothing compares our output with Premiere's
 
@@ -310,18 +310,17 @@ platforms** G4, G9, G17, G21; **performance** G16; **ecosystem** G11; **measurem
   image-sequence export downloads drop frames in Chrome (#378).
 - **Estimate:** 40–80 h. Doc: [web.md](web.md).
 
-## G21. The Android build is app-private only
+## G21. The Android build has no hardware codecs or store packaging
 
-- **Missing:** the arm64 APK launches, renders and saves (verified on a Samsung Tab S10 FE+,
-  Android 16), but reaches only its own storage: every dialog lives inside `<files>`, so a clip
-  cannot be picked from Downloads or the gallery and a render cannot land in a shared folder.
-  Shared storage needs "All files access", which Android only grants from its own settings page
-  (the JNI call this workspace's no-`unsafe` rule does not allow yet). There is no hardware
-  decode or encode on Android either — `platform`'s FFI covers VideoToolbox, Media Foundation /
-  Direct3D 11, VA-API and NVDEC / NVENC only — so the phone decodes and encodes in pure Rust, and
-  the APK is signed with a local keystore for `adb install`: no release signing or store
-  packaging yet.
-- **Estimate:** 30–60 h. Doc: [architecture.md](architecture.md#what-the-android-build-changes).
+- **Missing:** the arm64 APK launches, renders, saves and browses, and once the user grants "All
+  files access" it reaches shared storage too — a clip can be picked from the gallery or Downloads
+  and a render can land in a shared folder (verified on a Samsung Tab S10 FE+, Android 16). What it
+  still lacks: no hardware decode or encode (`platform`'s FFI covers VideoToolbox, Media
+  Foundation / Direct3D 11, VA-API and NVDEC / NVENC only), so the phone decodes and encodes in
+  pure Rust; the grant has to be given by hand from Android's settings page (an app can never hold
+  it silently, and Android can withdraw it); and the APK is signed with a local keystore for
+  `adb install`: no release signing or store packaging yet.
+- **Estimate:** 20–45 h. Doc: [architecture.md](architecture.md#what-the-android-build-changes).
 
 ## Revision history
 
@@ -331,3 +330,4 @@ platforms** G4, G9, G17, G21; **performance** G16; **ecosystem** G11; **measurem
 | 2026-10-12 | minor | G10: MP1 (`A_MPEG/L1`) in Matroska imports (#1402) |
 | 2026-10-12 | minor | G10: OpenEXR PXR24 import |
 | 2026-10-15 | minor | G21: the Android build is app-private only (the arm64 APK launches, saves and renders on a tablet; shared storage, hardware decode and store packaging remain) |
+| 2026-10-15 | minor | G21: shared storage on Android — the in-app browser's second root behind "All files access" (the grant is checked and opened over JNI, the entry crate's named `unsafe` exception); hardware codecs and store packaging remain, so the gap is retitled |

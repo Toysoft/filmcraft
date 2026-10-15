@@ -105,7 +105,10 @@ egui UI and the web app, so everything up to the engine stays web-portable and t
 not inherit the workspace lints at all: `filmcraft-android` sets the workspace's clippy denials
 itself and leaves `unsafe_code` alone, because Android's NativeActivity ABI requires an unmangled
 `android_main` and edition 2024 spells that `#[unsafe(no_mangle)]` — there is no safe spelling of a
-required export symbol. That crate contains no unsafe code.
+required export symbol. One file inside it, `android_access.rs`, now holds the workspace's only
+other `unsafe`: the JNI to the activity's JVM that checks and opens Android's "All files access"
+grant, named as the second exception by AGENTS.md §0.3 — on the same terms as `platform` (a safe
+API out, pointers never leaving the file, every failure degrading to "not granted").
 
 ### What the Android build changes
 
@@ -114,8 +117,9 @@ app what it has, not a `cfg` inside the panels:
 
 | Host | Behaviour |
 |---|---|
-| `HostHooks::app_files_dir` set (Android) | rfd has no backend there, so *every* file dialog — Save, Save As, Open Project, imports, exports, folder picks, relink — is served by [android_file.rs](../crates/ui-egui/src/panels/android_file.rs), FilmCraft's own browser. It opens on the frame the command asks, answers over the same channel a non-blocking host dialog uses (so the command continues on a later frame), and never leaves the directory it was given. |
-| unset (desktop, web) | the system picker as before (`rfd`, or the File System Access API in the browser), unchanged. |
+| `HostHooks::app_files_dir` set (Android) | rfd has no backend there, so *every* file dialog — Save, Save As, Open Project, imports, exports, folder picks, relink — is served by [android_file.rs](../crates/ui-egui/src/panels/android_file.rs), FilmCraft's own browser. It opens on the frame the command asks, answers over the same channel a non-blocking host dialog uses (so the command continues on a later frame), and never leaves the root it is showing. |
+| `HostHooks::shared_storage_root` set (Android) | the same browser gets a **second root**: a switcher row between `App storage` (the private directory above) and `Shared storage`, which it enters only while `HostHooks::shared_storage_granted` reports that "All files access" is held — re-read every frame, since the settings page that grants it backgrounds the app. Without the grant the switcher (or the `Grant access` button inside the unreadable root) calls `HostHooks::shared_storage_grant` instead of navigating. |
+| both unset (desktop, web) | the system picker as before (`rfd`, or the File System Access API in the browser), unchanged. |
 
 The directory is Android's app-private `internal_data_path`, split once by
 `apps/filmcraft/src/android_storage.rs`:
@@ -128,9 +132,16 @@ The directory is Android's app-private `internal_data_path`, split once by
 <files>/config/     the data root: settings, auto-save, recovery, logs
 ```
 
-Nothing outside `<files>` is reachable, so the manifest asks for no storage permission at all.
-Reaching shared storage would need "All files access", which an app can only grant on the system
-settings page (a JNI call this workspace does not allow yet) — it is not declared either.
+Beside it the browser offers Android's shared internal storage (`/storage/emulated/0`) as a second
+root, once the user holds "All files access" (`MANAGE_EXTERNAL_STORAGE`, declared in the manifest).
+Android never grants that silently: the entry crate *checks* it and *opens the screen* that grants
+it — the system settings page on Android 11+, the ordinary permission dialog before — through
+`apps/filmcraft-android/src/android_access.rs`, the JNI that AGENTS.md §0.3 names as the
+workspace's second `unsafe` exception (a safe `SharedStorageAccess` of plain closures goes on into
+the shared app). Until the grant exists nothing outside `<files>` is reachable and the dialog is
+exactly the app-private one above; after it, a save, export, project or media import can be placed
+anywhere the user can browse — which is what keeps an ungranted build from holding a permission the
+user never gave.
 
 The launcher icon comes from `apps/filmcraft-android/res/mipmap-<density>/ic_launcher.png`
 (`@mipmap/ic_launcher`), regenerated from `filmcraft.svg` by `packaging/icons.sh`; because `aapt -S`

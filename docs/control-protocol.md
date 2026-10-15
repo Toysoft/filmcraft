@@ -192,3 +192,7 @@ resizes the root split; path entries use `false` for the first child and `true` 
 the second. `{"action":{"MoveFloating":{"panel":"Info","rect":[45,65,420,320]}}}`
 repositions and resizes the floating group containing Info. Invalid actions leave the
 layout unchanged. Pointer gestures dispatch through this same catalog command.
+
+### Monitor guide gestures
+
+Drag a guide or pull one from a monitor ruler. Hold Shift for 20× finer motion; releasing Shift preserves the current position. Press Alt during the drag to switch orientation (one toggle per press). The X/Y readout shows the resulting frame-pixel position. Escape restores an existing guide, including its orientation, or cancels a new one. Locked guides stay fixed. These gestures are view state; `ui.inspect` and `ui.set` expose the resulting monitor guides.

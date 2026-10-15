@@ -190,6 +190,18 @@ fn with_drop_import_off_the_file_is_only_imported() {
     assert_eq!(clip_counts(&h), (0, 0), "status: {}", h.state().ui.status);
 }
 
+/// Dropping a file that's already in the project places its existing item, not a second copy (#356).
+#[test]
+fn dropping_a_file_already_in_the_project_reuses_its_item() {
+    let mut h = harness();
+    let path = still("drop_still_twice.png");
+    drop_on_row(&mut h, "timeline.track.V1.target", &path);
+    let items = h.state().session.project.items.len();
+    drop_on_row(&mut h, "timeline.track.V1.target", &path);
+    assert_eq!(h.state().session.project.items.len(), items, "no duplicate item");
+    assert_eq!(clip_counts(&h), (2, 0), "status: {}", h.state().ui.status);
+}
+
 /// Several files dropped at once land end to end, and one undo takes all of them off the Timeline.
 #[test]
 fn several_files_dropped_together_are_placed_in_one_undo_step() {

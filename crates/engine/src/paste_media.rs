@@ -52,7 +52,7 @@ fn paste_media(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn import_and_place(s: &mut Session, paths: &[String], bin: Option<BinId>, place: bool, insert: bool) -> Result<Value> {
-    let mut import = json!({"paths": paths});
+    let mut import = json!({"paths": paths, "skipDuplicates": true});
     if let Some(b) = bin {
         import["bin"] = json!(b.0);
     }

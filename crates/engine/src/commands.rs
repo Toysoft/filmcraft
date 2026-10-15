@@ -1365,10 +1365,15 @@ fn build() -> Vec<CommandSpec> {
             // Settings ▸ Media ▸ Import image sequences on, a single numbered still is detected.
             let as_sequence = p.get("imageSequence").and_then(Value::as_bool).unwrap_or(false);
             let detect = !as_sequence && s.prefs.media.import_image_sequences && paths.len() == 1;
+            // Opt-in so scripts, agents and internal imports can still add a file twice on purpose.
+            let skip_duplicates = bool_p(p, "skipDuplicates").unwrap_or(false);
             for path in paths {
                 let sequence = as_sequence || (detect && detect_image_sequence(s, &path));
                 // A sequence is a different item from its first frame imported as a still.
-                if !sequence && let Some(dup) = find_duplicate_item(s, &path) {
+                if !sequence
+                    && skip_duplicates
+                    && let Some(dup) = find_duplicate_item(s, &path)
+                {
                     duplicates.push(json!({"path": path, "item": dup.0}));
                     continue;
                 }

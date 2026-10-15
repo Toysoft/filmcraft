@@ -1186,12 +1186,12 @@ fn duplicate_file_import_detection() {
     std::fs::write(&file_path, png_data).unwrap();
 
     // Import once - should succeed
-    let r1 = s.execute("file.import", json!({"paths": [file_path.to_str()]})).unwrap();
+    let r1 = s.execute("file.import", json!({"paths": [file_path.to_str()], "skipDuplicates": true})).unwrap();
     assert_eq!(r1["items"].as_array().unwrap().len(), 1, "first import adds item");
     assert!(r1.get("duplicates").is_none(), "no duplicates on first import");
 
     // Import again with absolute path - should be duplicate
-    let r2 = s.execute("file.import", json!({"paths": [file_path.to_str()]})).unwrap();
+    let r2 = s.execute("file.import", json!({"paths": [file_path.to_str()], "skipDuplicates": true})).unwrap();
     assert_eq!(r2["items"].as_array().unwrap().len(), 0, "second import adds nothing");
     assert_eq!(r2["duplicates"].as_array().unwrap().len(), 1, "reports duplicate");
     assert_eq!(r2["duplicates"][0]["item"], r1["items"][0], "duplicate points to original item");
@@ -1200,9 +1200,14 @@ fn duplicate_file_import_detection() {
     // absolute paths only, so no set_current_dir racing other tests.
     let reconstructed = dir.join(".").join("test.png");
     assert_ne!(reconstructed.as_os_str(), file_path.as_os_str());
-    let r3 = s.execute("file.import", json!({"paths": [reconstructed.to_str()]})).unwrap();
+    let r3 = s.execute("file.import", json!({"paths": [reconstructed.to_str()], "skipDuplicates": true})).unwrap();
     assert_eq!(r3["items"].as_array().unwrap().len(), 0, "reconstructed path adds nothing");
     assert_eq!(r3["duplicates"].as_array().unwrap().len(), 1, "reports duplicate");
+
+    // Without the opt-in (scripts, agents), importing the same file again still adds an item.
+    let r4 = s.execute("file.import", json!({"paths": [file_path.to_str()]})).unwrap();
+    assert_eq!(r4["items"].as_array().unwrap().len(), 1, "script import keeps duplicates");
+    assert!(r4.get("duplicates").is_none());
 
     // Clean up
     std::fs::remove_dir_all(&dir).ok();

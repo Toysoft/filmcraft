@@ -1282,7 +1282,7 @@ impl FilmcraftApp {
                         return Ok(Value::Null);
                     }
                     let bin = bin.unwrap_or_else(|| json!(app.import_bin().0));
-                    let r = app.session.execute("file.import", json!({"paths": paths, "bin": bin})).map_err(|e| e.to_string());
+                    let r = app.session.execute("file.import", json!({"paths": paths, "bin": bin, "skipDuplicates": true})).map_err(|e| e.to_string());
                     if let Ok(v) = &r
                         && let Some(errs) = v.get("errors").and_then(Value::as_array)
                         && !errs.is_empty()
@@ -1398,13 +1398,15 @@ impl FilmcraftApp {
         }
         if !paths.is_empty() {
             let pointer = self.drop_pointer(ctx);
-            let imported = self.session.execute("file.import", json!({"paths": paths, "bin": self.import_bin().0}));
+            let imported = self.session.execute("file.import", json!({"paths": paths, "bin": self.import_bin().0, "skipDuplicates": true}));
             if let Ok(v) = imported
                 && let Some(pos) = pointer
                 && self.session.prefs.timeline.drop_import_to_timeline
             {
+                // Files already in the project are placed from their existing item.
+                let dups = v["duplicates"].as_array().into_iter().flatten().map(|d| &d["item"]);
                 let items: Vec<filmcraft_engine::project::ItemId> =
-                    v["items"].as_array().map(|a| a.iter().filter_map(|i| i.as_u64()).map(filmcraft_engine::project::ItemId).collect()).unwrap_or_default();
+                    v["items"].as_array().into_iter().flatten().chain(dups).filter_map(|i| i.as_u64()).map(filmcraft_engine::project::ItemId).collect();
                 if !items.is_empty() {
                     self.pending_timeline_drop = Some((items, pos));
                 }

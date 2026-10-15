@@ -44,6 +44,13 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             app.ui.mode = crate::state::Mode::Edit;
         }
     }
+    if app.hooks.reactor_generate.is_some() {
+        let generate = ui.put(Rect::from_min_size(rect.min + vec2(24.0, 248.0), vec2(260.0, 28.0)), egui::Button::new(tl!("Generate with Reactor…")));
+        app.auto.add("import.reactor.generate", generate.rect, "Generate with Reactor FastH3 Omni");
+        if generate.clicked() {
+            let _ = crate::menus::invoke(app, &ctx, "reactor.generate", json!({}));
+        }
+    }
     let y = recent(app, ui, rect, 90.0 + 150.0 + 36.0);
     // Community and project links.
     // ArtCraft wordmark (first-party trademark, docs/brand/), then the section title.

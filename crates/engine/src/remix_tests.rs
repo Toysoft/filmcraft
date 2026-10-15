@@ -160,3 +160,20 @@ fn overlaps_are_refused_and_noise_cannot_be_remixed() {
     let err = s.execute("clip.remix.enable", json!({})).unwrap_err().to_string();
     assert!(err.contains("beat") || err.contains("short"), "{err}");
 }
+
+#[test]
+fn remix_analysis_never_reuses_another_sessions_item_id() {
+    let (music, _) = music();
+    let (mut first, c1) = session(&music, None);
+    first.execute("clip.remix.enable", json!({"clip": c1.0})).unwrap();
+    // Same item id, path, duration and sample rate; entirely different source bytes.
+    let silence = vec![vec![0.0; music[0].len()]; 2];
+    let (mut second, c2) = session(&silence, None);
+    assert_eq!(c1, c2);
+    let before = second.project.to_json();
+    let error = second.execute("clip.remix.enable", json!({"clip": c2.0})).unwrap_err();
+    assert!(error.to_string().contains("no beat"), "{error}");
+    assert_eq!(second.project.to_json(), before);
+    // The first session still has its own valid source and can re-plan.
+    first.execute("clip.remix", json!({"clip": c1.0, "seconds": 20})).unwrap();
+}

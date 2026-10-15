@@ -143,6 +143,19 @@ exactly the app-private one above; after it, a save, export, project or media im
 anywhere the user can browse — which is what keeps an ungranted build from holding a permission the
 user never gave.
 
+Two layers make a physical keyboard and mouse usable there. winit 0.30.13 (the last 0.30 release,
+pinned by eframe 0.36) reports no modifier state on Android — it ignores the meta state the OS
+carries on every key event and never emits the `ModifiersChanged` egui-winit learns `Ctrl`/`Shift`/
+`Alt` from — and drops every motion action that is not a touch, so a mouse has no hover, no wheel
+and no right or middle button. The workspace therefore vends winit with that mouse path filled in
+([third_party/winit](../third_party/winit/README.md): one Android-only file, pinned by
+`[patch.crates-io]`; every other target compiles the published crate byte-for-byte) and stamps the
+modifier keys onto each frame's key events itself (`stamp_android_modifiers` in `ui-egui`, driven
+from `raw_input_hook` before egui builds its input state). The stamping also keeps a chord from
+degrading into its bare-key binding: without it Ctrl+Z arrives as a plain `Z`, which the Timeline
+panel binds to Lift, so "undo" removed a segment instead. Touch and touch-dragged stylus input is
+untouched in both layers.
+
 The launcher icon comes from `apps/filmcraft-android/res/mipmap-<density>/ic_launcher.png`
 (`@mipmap/ic_launcher`), regenerated from `filmcraft.svg` by `packaging/icons.sh`; because `aapt -S`
 rejects a second resource name in a directory, those five PNGs are the only assets in the repository
@@ -816,4 +829,5 @@ native menus) in `apps/filmcraft`. [roadmap.md](roadmap.md) has the milestone st
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Android input: vendored winit (`third_party/winit`) with the mouse/trackpad path filled in — wheel, right/middle button, hover — and in-app keyboard-modifier stamping (`stamp_android_modifiers`), since winit's Android backend emits neither `ModifiersChanged` nor any mouse event |
 | 2026-10-10 | trivial | Status line and revision history added (craftrules progress-docs standard); milestone link points at docs/roadmap.md |
